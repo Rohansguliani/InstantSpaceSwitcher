@@ -422,10 +422,34 @@ bool iss_can_move(ISSSpaceInfo info, ISSDirection direction) {
     return !iss_should_block_switch(&info, direction);
 }
 
+/** @brief Swipe progress for a given gesture phase.
+ *
+ * Began carries a near-zero progress (±FLT_TRUE_MIN) so no intermediate frame
+ * is drawn. Changed and Ended carry the full ±1.0 travel.
+ *
+ * WindowServer builds the destination space's compositing surfaces as swipe
+ * progress advances. A gesture that commits with ~zero travel (progress ≈ 0 on
+ * every phase, high velocity) lands on a space whose surfaces were never built:
+ * the windows are still in the window list but do not paint until Mission
+ * Control or an app activation forces a redraw ("all windows invisible",
+ * issue #58). Carrying the full progress on Changed makes WindowServer build
+ * the surfaces before the commit. The switch is still instant.
+ *
+ * Measured on macOS 26.6.2 (M4 Pro) with a screencapture-based probe
+ * (`screencapture -l <wid>` fails with "could not create image from window"
+ * when a window is wedged): progress ±FLT_TRUE_MIN on all phases wedged
+ * 15/31 window probes; ±FLT_TRUE_MIN on Began + ±1.0 on Changed/Ended
+ * wedged 0/18.
+ */
+double iss_swipe_progress_for_phase(CGSGesturePhase phase, ISSDirection direction) {
+    const bool isRight = (direction == ISSDirectionRight);
+    const double magnitude = (phase == kCGSGesturePhaseBegan) ? (double)FLT_TRUE_MIN : 1.0;
+    return isRight ? magnitude : -magnitude;
+}
+
 static bool iss_post_dock_swipe(CGSGesturePhase phase, ISSDirection direction, double velocity) {
     const bool isRight = (direction == ISSDirectionRight);
-    // Empirically, ±FLT_TRUE_MIN used in this way makes switching instant.
-    const double progress = isRight ? (double)FLT_TRUE_MIN : -(double)FLT_TRUE_MIN;
+    const double progress = iss_swipe_progress_for_phase(phase, direction);
 
     // Velocity of gesture based on speed setting
     const double vel = isRight ? velocity : -velocity;
